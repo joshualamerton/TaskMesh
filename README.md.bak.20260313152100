@@ -159,70 +159,61 @@ The Worker Agent claims tasks from the TaskMesh router based on its capabilities
 
 The Worker Agent executes the assigned task and reports the outcome to the TaskMesh router.
 
-## Capability-Based Task Routing
---------------------------------
-
-TaskMesh now supports capability-based task routing, which enables agents to claim tasks based on their capabilities.
-
-### Agent Capabilities
-
-Agents can define their capabilities using the `AgentCapabilities` class.
-
-```python
-# core/agent.py
-
-from dataclasses import dataclass
-
-@dataclass
-class AgentCapabilities:
-    capabilities: list[str]
-
-    def has_capability(self, capability: str) -> bool:
-        return capability in self.capabilities
-```
-
-### Task Requirements
-
-Tasks can define their requirements using the `TaskRequirements` class.
-
 ```python
 # core/task.py
 
-from dataclasses import dataclass
+import enum
 
-@dataclass
-class TaskRequirements:
-    requirements: list[str]
+class TaskState(enum.Enum):
+    PENDING = 1
+    RUNNING = 2
+    SUCCESS = 3
+    FAILURE = 4
+    RETRY = 5
 
-    def matches_agent_capabilities(self, agent_capabilities: AgentCapabilities) -> bool:
-        return all(requirement in agent_capabilities.capabilities for requirement in self.requirements)
+class Task:
+    def __init__(self, task_id, retry_count=0, max_retries=3):
+        self.task_id = task_id
+        self.retry_count = retry_count
+        self.max_retries = max_retries
+        self.state = TaskState.PENDING
+
+    def increment_retry_count(self):
+        self.retry_count += 1
+
+    def is_eligible_for_retry(self):
+        return self.retry_count < self.max_retries
+
+    def mark_as_failed(self):
+        self.state = TaskState.FAILURE
+
+    def mark_as_successful(self):
+        self.state = TaskState.SUCCESS
+
+    def mark_as_retry(self):
+        self.state = TaskState.RETRY
 ```
-
-### Task Router
-
-The Task Router uses the `TaskRequirements` and `AgentCapabilities` classes to determine the best agent to assign a task to.
 
 ```python
 # core/task_router.py
 
-from core.task import Task, TaskRequirements
-from core.agent import AgentCapabilities
+import logging
+from core.task import Task, TaskState
 
 class TaskRouter:
     def __init__(self):
         self.tasks = {}
-        self.agents = {}
 
-    def submit_task(self, task: Task):
+    def submit_task(self, task):
         self.tasks[task.task_id] = task
 
-    def claim_task(self, agent: Agent):
+    def claim_task(self, agent):
         for task in self.tasks.values():
-            if task.is_eligible_for_retry() and task.requires_agent_capabilities(agent.capabilities):
+            if task.is_eligible_for_retry() and agent.can_claim_task(task):
                 return task
         return None
 
-    def execute_task(self, task: Task, agent: Agent):
+    def execute_task(self, task, agent):
         try:
             agent.execute_task(task)
             task.mark_as_successful()
@@ -235,25 +226,19 @@ class TaskRouter:
                 logging.error(f"Task {task.task_id} failed with error: {e}")
 ```
 
-## Example Usage
-----------------
-
-The following example demonstrates how to use the TaskMesh router with capability-based task routing.
-
 ```python
 # examples/demo.py
 
 import logging
 from core.task_router import TaskRouter
 from core.task import Task
-from core.agent import Agent, AgentCapabilities
+from agent import WorkerAgent
 
 def main():
     task_router = TaskRouter()
-    worker_agent = Agent(AgentCapabilities(["capability-1", "capability-2"]))
-    producer_agent = Agent(AgentCapabilities(["capability-1"]))
+    worker_agent = WorkerAgent()
 
-    task = Task("task-1", TaskRequirements(["capability-1"]))
+    task = Task("task-1")
     task_router.submit_task(task)
 
     claimed_task = task_router.claim_task(worker_agent)
@@ -263,5 +248,3 @@ def main():
 if __name__ == "__main__":
     main()
 ```
-
-This example demonstrates how the TaskMesh router uses the `TaskRequirements` and `AgentCapabilities` classes to determine the best agent to assign a task to. The `TaskProducerAgent` submits a task with a requirement for `capability-1`, and the `WorkerAgent` claims the task because it has the required capability.
